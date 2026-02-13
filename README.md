@@ -50,7 +50,7 @@ OpenSmoothScroll 是一個旨在改善 Windows 預設滾動體驗的開源專案
 |--------|------|------|
 | `Ctrl + Alt + Shift + S` | 切換啟用/停用 | 預設快捷鍵，可在設定檔中自訂 |
 
-> 💡 快捷鍵可在 `%APPDATA%\OpenSmoothScroll\settings.json` 中修改 `hotkey` 欄位，
+> 💡 快捷鍵可在 `%APPDATA%\OpenSmoothScroll\settings.json` 中，Win+R貼上路徑即可修改 `hotkey` 欄位，
 > 支援的修飾鍵：`ctrl`、`alt`、`shift`、`win`，支援的按鍵：`a`-`z`、`0`-`9`、`f1`-`f12`、方向鍵等。
 
 ## 快速開始
@@ -216,3 +216,4 @@ opensmoothscroll/
 本專案採用 [MIT License](LICENSE) 授權。
 
 Copyright © 2026 OpenSmoothScroll Contributors
+
