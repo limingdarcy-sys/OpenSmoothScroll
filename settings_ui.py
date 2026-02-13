@@ -224,6 +224,9 @@ class SettingsWindow:
         # ── 排除清單區段 ──
         self._build_blacklist_section(content_frame)
 
+        # ── 個別程式設定區段 ──
+        self._build_per_app_section(content_frame)
+
         # ── 底部按鈕列 ──
         self._build_footer(content_frame)
 
@@ -277,7 +280,7 @@ class SettingsWindow:
         hotkey_text = self.settings.hotkey.upper().replace("+", " + ")
         hotkey_badge = tk.Label(
             row,
-            text=f"  {hotkey_text}  ",
+            text=f"  快捷鍵：{hotkey_text}  ",
             font=("Segoe UI", 8),
             fg=Colors.TEXT_MUTED,
             bg=Colors.BG_INPUT,
@@ -484,11 +487,9 @@ class SettingsWindow:
         section_label.pack(anchor="w", pady=(12, 6))
 
         toggles = [
-            ("enable_for_all_apps", "為所有應用程式啟用", "攔截所有應用程式的捲動事件"),
             ("animation_easing", "緩動動畫", "使用非線性緩動曲線讓動畫更自然"),
             ("shift_horizontal", "Shift + 滾輪水平捲動", "按住 Shift 鍵時將垂直捲動轉為水平"),
             ("horizontal_smoothness", "水平平滑捲動", "水平方向也套用平滑捲動效果"),
-            ("reverse_direction", "反向滾輪方向", "反轉滑鼠滾輪的捲動方向"),
         ]
 
         for key, label, desc in toggles:
@@ -718,6 +719,417 @@ class SettingsWindow:
         self._refresh_blacklist_display()
         self._show_toast(f"🗑️ 已移除 {removed}")
 
+    def _build_per_app_section(self, parent: tk.Frame) -> None:
+        """建構個別程式設定區段"""
+        section_label = tk.Label(
+            parent,
+            text="個別程式設定",
+            font=("Segoe UI", 12, "bold"),
+            fg=Colors.TEXT_PRIMARY,
+            bg=Colors.BG_DARK
+        )
+        section_label.pack(anchor="w", pady=(12, 2))
+
+        desc_label = tk.Label(
+            parent,
+            text="針對特定程式設定專屬的捲動參數（覆蓋全域設定）",
+            font=("Segoe UI", 8),
+            fg=Colors.TEXT_MUTED,
+            bg=Colors.BG_DARK
+        )
+        desc_label.pack(anchor="w", pady=(0, 6))
+
+        card = self._create_card(parent, pady=(0, 8))
+
+        # 已設定的程式清單
+        list_frame = tk.Frame(card, bg=Colors.BG_INPUT, highlightbackground=Colors.BORDER,
+                              highlightthickness=1)
+        list_frame.pack(fill="x", pady=(0, 8))
+
+        self._per_app_box = tk.Listbox(
+            list_frame,
+            height=4,
+            font=("Segoe UI", 9),
+            fg=Colors.TEXT_PRIMARY,
+            bg=Colors.BG_INPUT,
+            selectbackground=Colors.ACCENT,
+            selectforeground="#ffffff",
+            highlightthickness=0,
+            borderwidth=0,
+            activestyle="none",
+        )
+        self._per_app_box.pack(fill="x", padx=2, pady=2)
+
+        # 載入已有的個別程式設定
+        self._refresh_per_app_display()
+
+        # 按鈕列
+        btn_frame = tk.Frame(card, bg=Colors.BG_CARD)
+        btn_frame.pack(fill="x")
+
+        # 瀏覽加入程式按鈕
+        add_btn = tk.Label(
+            btn_frame,
+            text="➕ 瀏覽加入",
+            font=("Segoe UI", 9),
+            fg=Colors.TEXT_PRIMARY,
+            bg=Colors.BG_INPUT,
+            cursor="hand2",
+            padx=10, pady=4
+        )
+        add_btn.pack(side="left", padx=(0, 4))
+        add_btn.bind("<Button-1>", self._per_app_add)
+        add_btn.bind("<Enter>", lambda e: add_btn.configure(bg=Colors.BG_CARD_HOVER))
+        add_btn.bind("<Leave>", lambda e: add_btn.configure(bg=Colors.BG_INPUT))
+
+        # 偵測前景程式按鈕
+        detect_btn = tk.Label(
+            btn_frame,
+            text="🔍 偵測程式",
+            font=("Segoe UI", 9),
+            fg=Colors.TEXT_PRIMARY,
+            bg=Colors.BG_INPUT,
+            cursor="hand2",
+            padx=10, pady=4
+        )
+        detect_btn.pack(side="left", padx=(0, 4))
+        detect_btn.bind("<Button-1>", self._per_app_detect_foreground)
+        detect_btn.bind("<Enter>", lambda e: detect_btn.configure(bg=Colors.BG_CARD_HOVER))
+        detect_btn.bind("<Leave>", lambda e: detect_btn.configure(bg=Colors.BG_INPUT))
+
+        # 編輯選中程式按鈕
+        edit_btn = tk.Label(
+            btn_frame,
+            text="✏️ 編輯參數",
+            font=("Segoe UI", 9),
+            fg=Colors.ACCENT,
+            bg=Colors.BG_INPUT,
+            cursor="hand2",
+            padx=10, pady=4
+        )
+        edit_btn.pack(side="left", padx=(0, 4))
+        edit_btn.bind("<Button-1>", self._per_app_edit)
+        edit_btn.bind("<Enter>", lambda e: edit_btn.configure(bg=Colors.BG_CARD_HOVER))
+        edit_btn.bind("<Leave>", lambda e: edit_btn.configure(bg=Colors.BG_INPUT))
+
+        # 移除選中按鈕
+        remove_btn = tk.Label(
+            btn_frame,
+            text="❌ 移除選中",
+            font=("Segoe UI", 9),
+            fg=Colors.DANGER,
+            bg=Colors.BG_INPUT,
+            cursor="hand2",
+            padx=10, pady=4
+        )
+        remove_btn.pack(side="right")
+        remove_btn.bind("<Button-1>", self._per_app_remove)
+        remove_btn.bind("<Enter>", lambda e: remove_btn.configure(bg=Colors.BG_CARD_HOVER))
+        remove_btn.bind("<Leave>", lambda e: remove_btn.configure(bg=Colors.BG_INPUT))
+
+    def _refresh_per_app_display(self) -> None:
+        """更新個別程式設定清單顯示"""
+        self._per_app_box.delete(0, tk.END)
+        per_app = getattr(self.settings, 'per_app_settings', {})
+        if per_app:
+            self._per_app_box.configure(fg=Colors.TEXT_PRIMARY)
+            for exe_name, params in per_app.items():
+                # 顯示程式名稱和主要參數摘要
+                step = params.get('step_size', '—')
+                anim = params.get('animation_time', '—')
+                summary = f"{exe_name}  |  步幅:{step}  動畫:{anim}ms"
+                self._per_app_box.insert(tk.END, summary)
+        else:
+            self._per_app_box.configure(fg=Colors.TEXT_MUTED)
+            self._per_app_box.insert(0, "（尚未設定任何個別程式參數）")
+
+    def _per_app_add(self, event=None) -> None:
+        """新增個別程式設定（先選擇 exe）"""
+        filepath = filedialog.askopenfilename(
+            title="選擇要設定的程式",
+            filetypes=[("executable", "*.exe"), ("所有檔案", "*.*")],
+            parent=self.root
+        )
+        if filepath:
+            exe_name = os.path.basename(filepath).lower()
+            per_app = getattr(self.settings, 'per_app_settings', {})
+            if exe_name in per_app:
+                self._show_toast(f"⚠️ {exe_name} 已有設定，請選擇編輯")
+                return
+            # 預設使用全域設定的值
+            per_app[exe_name] = {
+                'step_size': self.settings.step_size,
+                'animation_time': self.settings.animation_time,
+                'acceleration_delta': self.settings.acceleration_delta,
+                'acceleration_max': self.settings.acceleration_max,
+                'tail_head_ratio': self.settings.tail_head_ratio,
+            }
+            self.settings.per_app_settings = per_app
+            self._refresh_per_app_display()
+            self._show_toast(f"✅ 已新增 {exe_name}，請點擊「編輯參數」調整")
+
+    def _per_app_detect_foreground(self, event=None) -> None:
+        """偵測下一個取得焦點的程式，3 秒後偵測並加入個別設定"""
+        self._show_toast("🔍 3 秒後偵測前景程式，請切換到目標程式...")
+        self.root.after(3000, self._detect_foreground_for_per_app)
+
+    def _detect_foreground_for_per_app(self) -> None:
+        """偵測目前前景程式並加入個別程式設定"""
+        try:
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+
+            hwnd = user32.GetForegroundWindow()
+            if not hwnd:
+                self._show_toast("❌ 無法偵測前景程式")
+                return
+
+            pid = ctypes.wintypes.DWORD(0)
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value == 0:
+                self._show_toast("❌ 無法取得程序 PID")
+                return
+
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+            if not handle:
+                self._show_toast("❌ 無法開啟程序")
+                return
+
+            try:
+                buf = ctypes.create_unicode_buffer(512)
+                buf_size = ctypes.wintypes.DWORD(512)
+                if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(buf_size)):
+                    exe_name = buf.value.rsplit("\\", 1)[-1].lower()
+                    per_app = getattr(self.settings, 'per_app_settings', {})
+                    if exe_name in per_app:
+                        self._show_toast(f"⚠️ {exe_name} 已有設定，請選擇編輯")
+                    else:
+                        per_app[exe_name] = {
+                            'step_size': self.settings.step_size,
+                            'animation_time': self.settings.animation_time,
+                            'acceleration_delta': self.settings.acceleration_delta,
+                            'acceleration_max': self.settings.acceleration_max,
+                            'tail_head_ratio': self.settings.tail_head_ratio,
+                        }
+                        self.settings.per_app_settings = per_app
+                        self._refresh_per_app_display()
+                        self._show_toast(f"✅ 已偵測並加入 {exe_name}")
+                else:
+                    self._show_toast("❌ 無法取得程式名稱")
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception as e:
+            self._show_toast(f"❌ 偵測失敗: {e}")
+
+    def _per_app_edit(self, event=None) -> None:
+        """編輯選中的個別程式設定"""
+        selection = self._per_app_box.curselection()
+        if not selection:
+            self._show_toast("請先選取要編輯的程式")
+            return
+
+        per_app = getattr(self.settings, 'per_app_settings', {})
+        if not per_app:
+            return
+
+        exe_names = list(per_app.keys())
+        idx = selection[0]
+        if idx >= len(exe_names):
+            return
+        exe_name = exe_names[idx]
+        params = per_app[exe_name]
+
+        # 開啟編輯對話框
+        self._open_per_app_editor(exe_name, params)
+
+    def _open_per_app_editor(self, exe_name: str, params: dict) -> None:
+        """開啟個別程式參數編輯視窗"""
+        editor = tk.Toplevel(self.root)
+        editor.title(f"設定 - {exe_name}")
+        editor.configure(bg=Colors.BG_DARK)
+        editor.resizable(False, False)
+        editor.geometry("400x380")
+        editor.transient(self.root)
+        editor.grab_set()
+
+        # 深色標題列
+        try:
+            editor.update_idletasks()
+            hwnd = ctypes.windll.user32.GetParent(editor.winfo_id())
+            dark_mode = ctypes.c_int(1)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, 20, ctypes.byref(dark_mode), ctypes.sizeof(dark_mode))
+            color = ctypes.c_int(0x00140f0f)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, 35, ctypes.byref(color), ctypes.sizeof(color))
+            editor.withdraw()
+            editor.deiconify()
+        except Exception:
+            pass
+
+        # 圖示
+        try:
+            from utils import get_resource_path
+            icon_path = get_resource_path("icon.ico")
+            if os.path.exists(icon_path):
+                editor.iconbitmap(icon_path)
+        except Exception:
+            pass
+
+        # 標題
+        tk.Label(
+            editor, text=f"📋 {exe_name}",
+            font=("Segoe UI", 14, "bold"),
+            fg=Colors.TEXT_PRIMARY, bg=Colors.BG_DARK
+        ).pack(anchor="w", padx=16, pady=(12, 8))
+
+        # 參數編輯
+        param_defs = [
+            ("step_size", "步幅大小", "px", 10, 500, 10, int),
+            ("animation_time", "動畫時間", "ms", 50, 2000, 50, int),
+            ("acceleration_delta", "加速臨界值", "ms", 10, 200, 5, int),
+            ("acceleration_max", "最大加速倍率", "x", 1.0, 10.0, 0.5, float),
+            ("tail_head_ratio", "減速/加速比", "x", 1.0, 10.0, 0.5, float),
+        ]
+
+        entries = {}
+        for key, label, unit, min_v, max_v, res, vtype in param_defs:
+            row = tk.Frame(editor, bg=Colors.BG_DARK)
+            row.pack(fill="x", padx=16, pady=3)
+
+            tk.Label(
+                row, text=label,
+                font=("Segoe UI", 9),
+                fg=Colors.TEXT_PRIMARY, bg=Colors.BG_DARK,
+                width=14, anchor="w"
+            ).pack(side="left")
+
+            entry_var = tk.StringVar(value=str(params.get(key, getattr(self.settings, key))))
+            entry = tk.Entry(
+                row, textvariable=entry_var,
+                font=("Segoe UI", 9),
+                fg=Colors.TEXT_PRIMARY, bg=Colors.BG_INPUT,
+                insertbackground=Colors.TEXT_PRIMARY,
+                highlightbackground=Colors.BORDER,
+                highlightthickness=1,
+                width=10
+            )
+            entry.pack(side="left", padx=(4, 4))
+
+            tk.Label(
+                row, text=unit,
+                font=("Segoe UI", 8),
+                fg=Colors.TEXT_MUTED, bg=Colors.BG_DARK
+            ).pack(side="left")
+
+            entries[key] = (entry_var, vtype)
+
+        # 按鈕列
+        btn_row = tk.Frame(editor, bg=Colors.BG_DARK)
+        btn_row.pack(fill="x", padx=16, pady=(16, 12))
+
+        def save_per_app():
+            per_app = getattr(self.settings, 'per_app_settings', {})
+            new_params = {}
+            for key, (var, vtype) in entries.items():
+                try:
+                    new_params[key] = vtype(var.get())
+                except ValueError:
+                    self._show_toast(f"❌ 數值格式錯誤：{key}")
+                    return
+            per_app[exe_name] = new_params
+            self.settings.per_app_settings = per_app
+            self._refresh_per_app_display()
+            editor.destroy()
+            self._show_toast(f"✅ {exe_name} 參數已儲存")
+
+        save_btn = tk.Label(
+            btn_row, text="  💾 儲存  ",
+            font=("Segoe UI", 10, "bold"),
+            fg="#ffffff", bg=Colors.ACCENT,
+            cursor="hand2", padx=12, pady=6
+        )
+        save_btn.pack(side="right")
+        save_btn.bind("<Button-1>", lambda e: save_per_app())
+        save_btn.bind("<Enter>", lambda e: save_btn.configure(bg=Colors.ACCENT_HOVER))
+        save_btn.bind("<Leave>", lambda e: save_btn.configure(bg=Colors.ACCENT))
+
+        cancel_btn = tk.Label(
+            btn_row, text="  取消  ",
+            font=("Segoe UI", 9),
+            fg=Colors.TEXT_SECONDARY, bg=Colors.BG_CARD,
+            cursor="hand2", padx=12, pady=6
+        )
+        cancel_btn.pack(side="right", padx=(0, 8))
+        cancel_btn.bind("<Button-1>", lambda e: editor.destroy())
+
+    def _per_app_remove(self, event=None) -> None:
+        """移除選中的個別程式設定"""
+        selection = self._per_app_box.curselection()
+        if not selection:
+            self._show_toast("請先選取要移除的程式")
+            return
+
+        per_app = getattr(self.settings, 'per_app_settings', {})
+        if not per_app:
+            return
+
+        exe_names = list(per_app.keys())
+        idx = selection[0]
+        if idx >= len(exe_names):
+            return
+        removed = exe_names[idx]
+        del per_app[removed]
+        self.settings.per_app_settings = per_app
+        self._refresh_per_app_display()
+        self._show_toast(f"🗑️ 已移除 {removed} 的個別設定")
+
+    def _export_config_ini(self, event=None) -> None:
+        """匯出設定為 config.ini"""
+        from config import export_config_ini
+        filepath = filedialog.asksaveasfilename(
+            title="匯出設定檔",
+            defaultextension=".ini",
+            filetypes=[("INI 設定檔", "*.ini"), ("所有檔案", "*.*")],
+            initialfile="config.ini",
+            parent=self.root
+        )
+        if filepath:
+            try:
+                export_config_ini(self.settings, filepath)
+                self._show_toast(f"✅ 已匯出至 {os.path.basename(filepath)}")
+            except Exception as e:
+                self._show_toast(f"❌ 匯出失敗: {e}")
+
+    def _import_config_ini(self, event=None) -> None:
+        """匯入 config.ini 設定"""
+        from config import import_config_ini
+        filepath = filedialog.askopenfilename(
+            title="匯入設定檔",
+            filetypes=[("INI 設定檔", "*.ini"), ("所有檔案", "*.*")],
+            parent=self.root
+        )
+        if filepath:
+            try:
+                new_settings = import_config_ini(filepath)
+                # 更新所有滑桿
+                for key, var in self._sliders.items():
+                    var.set(getattr(new_settings, key))
+                # 更新所有開關
+                for key, toggle in self._toggles.items():
+                    if hasattr(new_settings, key):
+                        toggle.set_state(getattr(new_settings, key))
+                # 更新設定物件
+                self.settings = new_settings
+                # 更新排除清單
+                self._refresh_blacklist_display()
+                # 更新個別程式設定
+                self._refresh_per_app_display()
+                self._show_toast(f"✅ 已匯入 {os.path.basename(filepath)}")
+            except Exception as e:
+                self._show_toast(f"❌ 匯入失敗: {e}")
+
     def _build_footer(self, parent: tk.Frame) -> None:
         """建構底部按鈕列"""
         footer = tk.Frame(parent, bg=Colors.BG_DARK)
@@ -754,6 +1166,38 @@ class SettingsWindow:
         save_btn.bind("<Button-1>", self._save_settings)
         save_btn.bind("<Enter>", lambda e: save_btn.configure(bg=Colors.ACCENT_HOVER))
         save_btn.bind("<Leave>", lambda e: save_btn.configure(bg=Colors.ACCENT))
+
+        # 匯出/匯入按鈕列
+        io_footer = tk.Frame(parent, bg=Colors.BG_DARK)
+        io_footer.pack(fill="x", pady=(8, 4))
+
+        export_btn = tk.Label(
+            io_footer,
+            text="  📤 匯出 config.ini  ",
+            font=("Segoe UI", 9),
+            fg=Colors.TEXT_PRIMARY,
+            bg=Colors.BG_CARD,
+            cursor="hand2",
+            padx=10, pady=5
+        )
+        export_btn.pack(side="left", padx=(0, 6))
+        export_btn.bind("<Button-1>", self._export_config_ini)
+        export_btn.bind("<Enter>", lambda e: export_btn.configure(bg=Colors.BG_CARD_HOVER))
+        export_btn.bind("<Leave>", lambda e: export_btn.configure(bg=Colors.BG_CARD))
+
+        import_btn = tk.Label(
+            io_footer,
+            text="  📥 匯入 config.ini  ",
+            font=("Segoe UI", 9),
+            fg=Colors.TEXT_PRIMARY,
+            bg=Colors.BG_CARD,
+            cursor="hand2",
+            padx=10, pady=5
+        )
+        import_btn.pack(side="left")
+        import_btn.bind("<Button-1>", self._import_config_ini)
+        import_btn.bind("<Enter>", lambda e: import_btn.configure(bg=Colors.BG_CARD_HOVER))
+        import_btn.bind("<Leave>", lambda e: import_btn.configure(bg=Colors.BG_CARD))
 
     def _on_frame_configure(self, event=None) -> None:
         """當內容 Frame 尺寸改變時，更新 Canvas 的捲動區域"""

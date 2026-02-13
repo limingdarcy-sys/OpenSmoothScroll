@@ -364,10 +364,6 @@ class SmoothScrollEngine:
         # mouseData 的高位元組包含滾輪的 delta 值
         delta = ctypes.c_short(hook_struct.mouseData >> 16).value
 
-        # 反向滾輪方向
-        if self.settings.reverse_direction:
-            delta = -delta
-
         # 判斷是垂直還是水平捲動
         is_horizontal = (wParam == WM_MOUSEHWHEEL)
 
@@ -378,16 +374,18 @@ class SmoothScrollEngine:
                 is_horizontal = True
 
         # 計算捲動量（考慮加速度）
-        scroll_amount = self._calculate_scroll_amount(delta)
+        # 取得前景程式的個別設定（如果有的話）
+        app_params = self._get_foreground_app_params()
+        scroll_amount = self._calculate_scroll_amount(delta, app_params)
 
         # 啟動平滑動畫
         if is_horizontal and self.settings.horizontal_smoothness:
-            self._add_smooth_scroll_h(scroll_amount)
+            self._add_smooth_scroll_h(scroll_amount, app_params)
         elif is_horizontal:
             # 水平但不使用平滑 → 直接發送
             self._send_scroll_event(int(scroll_amount), horizontal=True)
         else:
-            self._add_smooth_scroll_v(scroll_amount)
+            self._add_smooth_scroll_v(scroll_amount, app_params)
 
         # 攔截原始事件（回傳 1 表示已處理）
         return 1
@@ -446,23 +444,50 @@ class SmoothScrollEngine:
         except Exception:
             return False
 
-    def _calculate_scroll_amount(self, delta: int) -> float:
+    def _get_foreground_app_params(self) -> dict:
+        """
+        取得前景程式的個別設定參數。
+        如果該程式有個別設定，回傳覆蓋後的參數；否則回傳全域參數。
+        """
+        try:
+            hwnd = GetForegroundWindow()
+            if not hwnd:
+                return self.settings.get_app_settings("")
+
+            pid = ctypes.wintypes.DWORD(0)
+            GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value == 0:
+                return self.settings.get_app_settings("")
+
+            exe_name = self._get_process_name_by_pid(pid.value)
+            return self.settings.get_app_settings(exe_name)
+        except Exception:
+            return self.settings.get_app_settings("")
+
+    def _calculate_scroll_amount(self, delta: int, app_params: dict = None) -> float:
         """計算考慮加速度後的捲動量"""
+        if app_params is None:
+            app_params = self._get_foreground_app_params()
+
         now = time.perf_counter() * 1000  # 轉換為毫秒
         time_since_last = now - self._last_scroll_time
 
         # 標準化 delta（一般為 ±120，對應一個滾輪刻度）
         direction = 1 if delta > 0 else -1
-        base_amount = self.settings.step_size * direction
+        step_size = app_params.get('step_size', self.settings.step_size)
+        base_amount = step_size * direction
 
         # 加速度計算
-        if time_since_last < self.settings.acceleration_delta:
+        accel_delta = app_params.get('acceleration_delta', self.settings.acceleration_delta)
+        accel_max = app_params.get('acceleration_max', self.settings.acceleration_max)
+
+        if time_since_last < accel_delta:
             # 快速連續捲動 → 加速
-            accel_factor = 1.0 - (time_since_last / self.settings.acceleration_delta)
+            accel_factor = 1.0 - (time_since_last / accel_delta)
             # 使用更平滑的加速度累加
             self._scroll_velocity = min(
                 self._scroll_velocity + accel_factor * 0.8,
-                self.settings.acceleration_max
+                accel_max
             )
         else:
             # 捲動間隔較長 → 快速衰減速度
@@ -473,7 +498,7 @@ class SmoothScrollEngine:
 
         return base_amount * self._scroll_velocity
 
-    def _add_smooth_scroll_v(self, amount: float) -> None:
+    def _add_smooth_scroll_v(self, amount: float, app_params: dict = None) -> None:
         """新增垂直平滑捲動目標"""
         with self._animation_lock:
             remaining = self._target_scroll_v - self._current_scroll_v
@@ -487,6 +512,9 @@ class SmoothScrollEngine:
             else:
                 # 同方向 → 正常疊加
                 self._target_scroll_v += amount
+
+            # 儲存當前的 app_params 供動畫執行緒使用
+            self._current_app_params_v = app_params
 
             if not self._animating_v:
                 self._animating_v = True
@@ -502,7 +530,7 @@ class SmoothScrollEngine:
                 self._current_scroll_v = 0
                 self._animation_start_v = time.perf_counter()
 
-    def _add_smooth_scroll_h(self, amount: float) -> None:
+    def _add_smooth_scroll_h(self, amount: float, app_params: dict = None) -> None:
         """新增水平平滑捲動目標"""
         with self._animation_lock:
             remaining = self._target_scroll_h - self._current_scroll_h
@@ -515,6 +543,9 @@ class SmoothScrollEngine:
                 self._scroll_velocity = 1.0
             else:
                 self._target_scroll_h += amount
+
+            # 儲存當前的 app_params 供動畫執行緒使用
+            self._current_app_params_h = app_params
 
             if not self._animating_h:
                 self._animating_h = True
@@ -542,6 +573,20 @@ class SmoothScrollEngine:
         # 使用 240Hz 更新率以確保高更新頻率螢幕的流暢度
         FRAME_INTERVAL = 1.0 / 240
         accumulated_remainder = 0.0
+
+        # 取得該方向的 app_params
+        if vertical:
+            app_params = getattr(self, '_current_app_params_v', None)
+        else:
+            app_params = getattr(self, '_current_app_params_h', None)
+
+        # 決定動畫時間和緩動參數
+        if app_params:
+            anim_time = app_params.get('animation_time', self.settings.animation_time)
+            tail_ratio = app_params.get('tail_head_ratio', self.settings.tail_head_ratio)
+        else:
+            anim_time = self.settings.animation_time
+            tail_ratio = self.settings.tail_head_ratio
 
         while self._running:
             with self._animation_lock:
@@ -571,7 +616,7 @@ class SmoothScrollEngine:
 
             # 計算動畫進度
             elapsed = (time.perf_counter() - start_time) * 1000  # 毫秒
-            duration = self.settings.animation_time
+            duration = anim_time
             
             # 安全防護：避免 duration 為 0
             if duration <= 0: duration = 1.0
@@ -583,7 +628,7 @@ class SmoothScrollEngine:
 
             # 套用緩動函數
             if self.settings.animation_easing:
-                eased = custom_ease(progress, self.settings.tail_head_ratio)
+                eased = custom_ease(progress, tail_ratio)
             else:
                 eased = progress  # 線性
 
