@@ -218,3 +218,4 @@ opensmoothscroll/
 Copyright © 2026 OpenSmoothScroll Contributors
 
 
+
