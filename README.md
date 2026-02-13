@@ -7,7 +7,7 @@
 
 ## 📖 專案簡介
 
-OpenSmoothScroll 是一個旨在改善 Windows 預設滾動體驗的開源專案。透過底層鉤子技術與物理慣性演算法，讓所有應用程式（Chrome, Discord, VS Code 等）都能擁有如 Mac 觸控板般的流暢捲動感。
+OpenSmoothScroll 是一個旨在改善 Windows 預設滾動體驗的開源專案。透過底層鉤子技術與物理慣性演算法，讓所有應用程式（Chrome, Cad, Pdf, Office 等）都能擁有如 Mac 觸控板般的流暢捲動感。
 
 > ⚠️ **注意**：本專案與付費軟體 "SmoothScroll" 無任何關聯，所有程式碼皆為獨立撰寫的開源實作。
 
@@ -216,6 +216,7 @@ opensmoothscroll/
 本專案採用 [MIT License](LICENSE) 授權。
 
 Copyright © 2026 OpenSmoothScroll Contributors
+
 
 
 
