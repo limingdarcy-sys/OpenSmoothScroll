@@ -38,6 +38,13 @@ def is_admin() -> bool:
 
 def main():
     """主程式入口"""
+    # 設定 AppUserModelID，確保工作列圖示正確顯示
+    try:
+        myappid = 'opensmoothscroll.core.v1.0'  # 任意唯一字串
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    except Exception:
+        pass
+
     # 命令列參數處理
     if "--ui" in sys.argv:
         # 直接開啟設定視窗（調試模式）

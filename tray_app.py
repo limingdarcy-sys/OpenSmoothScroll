@@ -5,11 +5,14 @@ OpenSmoothScroll - 系統匣應用模組
 架構說明：
   - 主線程：tkinter 事件迴圈（隱藏根視窗）
   - 背景線程：pystray 系統匣圖示
+  - 背景線程：全域快捷鍵監聽（RegisterHotKey）
   - 設定視窗以 Toplevel 方式在主線程開啟
 """
 
 import tkinter as tk
 import threading
+import ctypes
+import ctypes.wintypes as wintypes
 import os
 import sys
 from typing import Optional
@@ -24,36 +27,119 @@ from utils import is_startup_enabled, toggle_startup
 
 
 def create_tray_icon_image() -> Image.Image:
-    """建立系統匣圖示（程式碼繪製，無需外部檔案）"""
-    size = 64
+    """
+    建立系統匣圖示。
+    優先嘗試載入 'icon.ico'，若不存在則動態繪製。
+    """
+    try:
+        from utils import get_resource_path
+        icon_path = get_resource_path("icon.ico")
+        if os.path.exists(icon_path):
+            # 載入 ICO 並轉換為 RGBA 圖像
+            return Image.open(icon_path).convert("RGBA")
+    except Exception as e:
+        print(f"[警告] 載入 icon.ico 失敗，使用預設圖示: {e}")
+
+    # Fallback: 動態繪製 (解析度提高到 128)
+    size = 128
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
     # 背景圓角矩形
-    bg_color = (124, 92, 252)  # 主題紫色
-    draw.rounded_rectangle([4, 4, 60, 60], radius=12, fill=bg_color)
+    padding = 8
+    radius = 24
+    bg_color = (124, 92, 252)  # #7c5cfc 主題紫色
+    draw.rounded_rectangle(
+        [padding, padding, size - padding, size - padding],
+        radius=radius,
+        fill=bg_color
+    )
 
-    # 白色滾輪圖示
+    # 白色圖示（箭頭 + 波浪）
     arrow_color = (255, 255, 255)
     center_x = size // 2
+    center_y = size // 2
+
+    # 線條粗細
+    stroke = 6
 
     # 上箭頭
-    for i in range(5):
-        draw.rectangle([center_x - i - 1, 16 + i, center_x + i + 1, 17 + i],
-                       fill=arrow_color)
+    arrow_w = 24
+    arrow_h = 12
+    draw.polygon([
+        (center_x, center_y - arrow_h * 2 - 10),
+        (center_x - arrow_w, center_y - arrow_h - 10),
+        (center_x + arrow_w, center_y - arrow_h - 10)
+    ], fill=arrow_color)
 
     # 下箭頭
-    for i in range(5):
-        draw.rectangle([center_x - i - 1, 47 - i, center_x + i + 1, 48 - i],
-                       fill=arrow_color)
+    draw.polygon([
+        (center_x, center_y + arrow_h * 2 + 10),
+        (center_x - arrow_w, center_y + arrow_h + 10),
+        (center_x + arrow_w, center_y + arrow_h + 10)
+    ], fill=arrow_color)
 
-    # 波浪線（代表平滑）
-    for i in range(center_x - 12, center_x + 12, 2):
-        y_offset = 2 if (i // 4) % 2 == 0 else -2
-        draw.rectangle([i, center_x + y_offset - 1, i + 1, center_x + y_offset + 1],
-                       fill=arrow_color)
+    # 中間波浪線 (簡化為直線以確保清晰，或使用更平滑的波浪)
+    wave_len = 48
+    draw.line(
+        [(center_x - wave_len, center_y), (center_x + wave_len, center_y)],
+        fill=arrow_color,
+        width=stroke
+    )
 
     return img
+
+
+# ── Win32 常數 ──
+MOD_ALT = 0x0001
+MOD_CONTROL = 0x0002
+MOD_SHIFT = 0x0004
+MOD_WIN = 0x0008
+MOD_NOREPEAT = 0x4000
+WM_HOTKEY = 0x0312
+WM_QUIT = 0x0012
+HOTKEY_ID_TOGGLE = 1
+
+# 特殊鍵名稱對應 Virtual Key Code
+SPECIAL_VK_MAP = {
+    'f1': 0x70, 'f2': 0x71, 'f3': 0x72, 'f4': 0x73,
+    'f5': 0x74, 'f6': 0x75, 'f7': 0x76, 'f8': 0x77,
+    'f9': 0x78, 'f10': 0x79, 'f11': 0x7A, 'f12': 0x7B,
+    'space': 0x20, 'enter': 0x0D, 'tab': 0x09, 'esc': 0x1B,
+    'home': 0x24, 'end': 0x23, 'insert': 0x2D, 'delete': 0x2E,
+    'pageup': 0x21, 'pagedown': 0x22,
+    'up': 0x26, 'down': 0x28, 'left': 0x25, 'right': 0x27,
+    'pause': 0x13, 'capslock': 0x14, 'numlock': 0x90,
+}
+
+
+def parse_hotkey(hotkey_str: str) -> tuple:
+    """
+    解析快捷鍵字串為 (modifiers, virtual_key_code)
+    例如： 'ctrl+alt+shift+s' → (MOD_CONTROL | MOD_ALT | MOD_SHIFT, 0x53)
+    """
+    parts = [p.strip().lower() for p in hotkey_str.split('+')]
+    modifiers = MOD_NOREPEAT  # 防止按住不放時重複觸發
+    vk = 0
+
+    for part in parts:
+        if part in ('ctrl', 'control'):
+            modifiers |= MOD_CONTROL
+        elif part in ('alt', 'menu'):
+            modifiers |= MOD_ALT
+        elif part == 'shift':
+            modifiers |= MOD_SHIFT
+        elif part in ('win', 'windows', 'super'):
+            modifiers |= MOD_WIN
+        elif part in SPECIAL_VK_MAP:
+            vk = SPECIAL_VK_MAP[part]
+        elif len(part) == 1 and part.isalnum():
+            # 單一字母或數字
+            vk = ord(part.upper())
+        else:
+            print(f"[警告] 無法辨識的快捷鍵組件: '{part}'")
+
+    return modifiers, vk
 
 
 class TrayApp:
@@ -67,6 +153,7 @@ class TrayApp:
         self._tray_icon: Optional[pystray.Icon] = None
         self._settings_window: Optional[SettingsWindow] = None
         self._tk_root: Optional[tk.Tk] = None
+        self._hotkey_thread_id: Optional[int] = None  # 快捷鍵線程 ID（用於退出時傳送 WM_QUIT）
 
     def run(self) -> None:
         """啟動系統匣應用"""
@@ -78,11 +165,16 @@ class TrayApp:
         tray_thread = threading.Thread(target=self._run_tray, daemon=True)
         tray_thread.start()
 
+        # ── 背景線程：啟動全域快捷鍵監聽 ──
+        hotkey_thread = threading.Thread(target=self._hotkey_listener, daemon=True)
+        hotkey_thread.start()
+
         # 自動啟動引擎
         if self.settings.enabled:
             self.engine.start()
 
         print("[資訊] OpenSmoothScroll 已啟動，常駐於系統匣")
+        print(f"[資訊] 快捷鍵: {self.settings.hotkey.upper()} （切換啟用/停用）")
 
         # ── 主線程：tkinter 事件迴圈 ──
         self._tk_root.mainloop()
@@ -182,12 +274,50 @@ class TrayApp:
         if self._settings_window:
             self._settings_window.update_engine_status(running)
 
+    def _hotkey_listener(self) -> None:
+        """在背景線程中監聽全域快捷鍵（使用 Win32 RegisterHotKey）"""
+        # 記錄線程 ID，退出時需要向這個線程傳送 WM_QUIT
+        self._hotkey_thread_id = ctypes.windll.kernel32.GetCurrentThreadId()
+
+        modifiers, vk = parse_hotkey(self.settings.hotkey)
+
+        if vk == 0:
+            print("[警告] 快捷鍵設定無效，快捷鍵功能未啟用")
+            return
+
+        # 註冊全域快捷鍵
+        success = ctypes.windll.user32.RegisterHotKey(
+            None, HOTKEY_ID_TOGGLE, modifiers, vk
+        )
+        if not success:
+            print(f"[警告] 快捷鍵 {self.settings.hotkey.upper()} 註冊失敗（可能已被其他程式佔用）")
+            return
+
+        print(f"[資訊] 快捷鍵 {self.settings.hotkey.upper()} 已註冊")
+
+        # 訊息迴圈：等待 WM_HOTKEY
+        msg = wintypes.MSG()
+        while ctypes.windll.user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            if msg.message == WM_HOTKEY and msg.wParam == HOTKEY_ID_TOGGLE:
+                # 快捷鍵觸發 → 排程到主線程切換引擎
+                if self._tk_root:
+                    self._tk_root.after(0, self._toggle_engine)
+
+        # 迴圈結束（收到 WM_QUIT），取消註冊
+        ctypes.windll.user32.UnregisterHotKey(None, HOTKEY_ID_TOGGLE)
+
     def _quit(self, icon=None, item=None) -> None:
         """結束程式"""
         print("[資訊] 正在關閉 OpenSmoothScroll...")
 
         # 停止引擎
         self.engine.stop()
+
+        # 停止快捷鍵監聽線程
+        if self._hotkey_thread_id:
+            ctypes.windll.user32.PostThreadMessageW(
+                self._hotkey_thread_id, WM_QUIT, 0, 0
+            )
 
         # 停止系統匣
         if self._tray_icon:

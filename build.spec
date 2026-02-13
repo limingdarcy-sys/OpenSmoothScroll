@@ -27,7 +27,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('icon.ico', '.')],
     hiddenimports=['pystray._win32'],
     hookspath=[],
     hooksconfig={},
@@ -59,4 +59,5 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,
+    icon='icon.ico',  # 指定應用程式圖示
 )

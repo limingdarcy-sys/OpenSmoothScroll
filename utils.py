@@ -12,17 +12,33 @@ import tempfile
 # 程式名稱
 APP_NAME = "OpenSmoothScroll"
 
+def get_resource_path(relative_path: str) -> str:
+    """
+    取得資源檔案的絕對路徑。
+    支援 PyInstaller 打包後的 _MEIPASS 路徑。
+    """
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
+
 
 # ─── 開機啟動管理 ──────────────────────────────────────────────────────
 
 def get_startup_registry_key():
     """取得或開啟開機啟動的登錄機碼"""
-    return winreg.OpenKey(
-        winreg.HKEY_CURRENT_USER,
-        r"Software\Microsoft\Windows\CurrentVersion\Run",
-        0,
-        winreg.KEY_ALL_ACCESS
-    )
+    try:
+        return winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Run",
+            0,
+            winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE
+        )
+    except OSError:
+         # Fallback incase of permission issues or key missing
+         return winreg.CreateKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Run"
+         )
 
 
 def is_startup_enabled() -> bool:
@@ -30,12 +46,15 @@ def is_startup_enabled() -> bool:
     try:
         key = get_startup_registry_key()
         try:
-            winreg.QueryValueEx(key, APP_NAME)
+            val, _ = winreg.QueryValueEx(key, APP_NAME)
             return True
         except FileNotFoundError:
             return False
         finally:
-            winreg.CloseKey(key)
+            try:
+                winreg.CloseKey(key)
+            except:
+                pass
     except Exception:
         return False
 
@@ -43,13 +62,23 @@ def is_startup_enabled() -> bool:
 def enable_startup() -> bool:
     """設定開機啟動"""
     try:
+        # 判斷是否為 PyInstaller 打包的 EXE
+        if getattr(sys, 'frozen', False):
+            exe_path = sys.executable
+            command = f'"{exe_path}"'
+        else:
+            # 原始碼執行模式
+            python_exe = sys.executable
+            # 修正路徑處理，確保正確指向 main.py
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            script_path = os.path.join(script_dir, "main.py")
+            # 修正：使用 pythonw.exe (無主控台) 如果可能，或確保路徑正確引用
+            command = f'"{python_exe}" "{script_path}"'
+
         key = get_startup_registry_key()
-        # 取得目前 Python 執行檔和腳本路徑
-        python_exe = sys.executable
-        script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "main.py"))
-        command = f'"{python_exe}" "{script_path}"'
         winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, command)
         winreg.CloseKey(key)
+        print(f"[資訊] 已設定開機啟動: {command}")
         return True
     except Exception as e:
         print(f"[錯誤] 設定開機啟動失敗: {e}")

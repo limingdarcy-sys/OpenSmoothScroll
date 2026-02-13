@@ -35,6 +35,9 @@ class ScrollSettings:
     # 排除清單（黑名單）
     blacklist: List[str] = field(default_factory=list)  # 排除的程式執行檔名稱
 
+    # 快捷鍵
+    hotkey: str = "ctrl+alt+shift+s"  # 切換啟用/停用的全域快捷鍵
+
     # 程式狀態
     enabled: bool = True                   # 總開關
 

@@ -100,6 +100,19 @@ class SettingsWindow:
         except Exception:
             pass
 
+        from utils import get_resource_path
+        try:
+            icon_path = get_resource_path("icon.ico")
+            if os.path.exists(icon_path):
+                self.root.iconbitmap(icon_path)
+            else:
+                 # 嘗試在上一層目錄找（開發環境 fallback）
+                dev_path = os.path.join(os.path.dirname(__file__), "icon.ico")
+                if os.path.exists(dev_path):
+                     self.root.iconbitmap(dev_path)
+        except Exception as e:
+            print(f"[警告] 無法設定視窗圖示: {e}")
+
         # ── 設定 Windows 深色標題列 ──
         self._apply_dark_title_bar()
 
@@ -259,6 +272,18 @@ class SettingsWindow:
             bg=Colors.BG_CARD
         )
         self._status_label.pack(side="left")
+
+        # 快捷鍵提示標籤
+        hotkey_text = self.settings.hotkey.upper().replace("+", " + ")
+        hotkey_badge = tk.Label(
+            row,
+            text=f"  {hotkey_text}  ",
+            font=("Segoe UI", 8),
+            fg=Colors.TEXT_MUTED,
+            bg=Colors.BG_INPUT,
+            padx=6, pady=2
+        )
+        hotkey_badge.pack(side="left", padx=(10, 0))
 
         # 切換按鈕
         toggle_btn = tk.Label(
